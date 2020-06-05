@@ -1,0 +1,81 @@
+# ----------------------------------------------------------------------------
+# Title: Updating Hostfile entries on Openshift worker nodes.
+# Author: Chris Greenwood (chris.greenwood@uk.ibm.com)
+# based on a similar script by Ravi Konuru (rkonuru@us.ibm.com)
+# Last Updated: 04/06/2020
+
+# How to use:
+# 1. Update the HOSTDNS_1 and HOSTIP_1 variables with the DNS name and IP 
+#    address that you want it to resolve to.
+# 2. If you need further hosts file entries, export additional variables at the
+#    top of the script and then  
+#    Be CAREFUL OF SPACING and all lines WITHIN SHELL SCRIPT SECTION should
+#    END WITH SEMI-COLON (;)! YOU SHOULD NOT NEED TO MAKE ANY OTHER CHANGES.
+# 2. Run "oc apply -f ocp-hosts-daemonset.yaml"
+# 3. Run "oc get pods". You should see new "updatehosts-xxxxx" pods which
+#    will reach a "Running" state within a few seconds.
+# 4. To view the logs and status of this script, run "kubectl logs <podname>".
+#    (The same log messages will appear within IBM LogDNA for Log Analysis if
+#    it has been configured with your ROKS Cluster.)
+# ----------------------------------------------------------------------------
+
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: updatehosts
+spec:
+  selector:
+    matchLabels:
+      name: updatehosts
+  template:
+    metadata:
+      labels:
+        name: updatehosts
+    spec:
+      hostNetwork: true
+      hostPID: true
+      hostIPC: true
+      containers:
+        - resources:
+            requests:
+              cpu: 0.1
+          securityContext:
+            privileged: true
+          image: alpine
+          name: updatehosts
+          command: ["/bin/sh", "-c"]
+          args:
+            - >
+              export HOSTDNS_1=<host dns>;
+              export HOSTIP_1=<host ip>;
+
+              HOSTNAME=`hostname`;
+              echo "";
+              echo "Running updatehosts on worker node $HOSTNAME";
+              echo "=== current contents of /etc/hosts ====";
+              cat /host/etc/hosts;
+              echo "";
+              echo "Making a backup copy /etc/hosts before appending entries $HOSTDNS_1 and $HOSTIP_1.";
+              echo "-------------------------------------------------------";
+              cp /host/etc/hosts /host/etc/hosts.orig;
+
+              echo "  " >> /host/etc/hosts;
+              echo "# added by updatehosts daemonset. " >> /host/etc/hosts;
+              echo $HOSTIP_1  $HOSTDNS_1 >> /host/etc/hosts;
+              echo "";
+              echo "====Updated /etc/hosts file =======";
+              echo "";
+              cat /host/etc/hosts;
+              echo "Finished. Pod going to sleep.";
+              echo "";
+              while true; do
+                sleep 100000;
+              done;
+
+          volumeMounts:
+            - name: host-volume
+              mountPath: /host
+      volumes:
+        - name: host-volume
+          hostPath:
+            path: /
